@@ -1,0 +1,151 @@
+##This is a project for finding the relationship between income growth rate and other variables, and compare with the results
+##between the data with predicted uninsured rate and the data with real uninsured rate, and compare with the results between POLS methed
+##and FE method.
+
+##Input Panel Data 1, Uninsured Rate Data, and load package
+library(foreign)
+library(zoo)
+library(psych)
+setwd("~/Downloads")
+library(readxl)
+paneldata <- read_excel("~/StateData.xlsx", col_names = TRUE, col_types = NULL, sheet = 1)
+paneldata$state <- factor(paneldata$state)
+paneldata$year <- factor(paneldata$year)
+str(paneldata)
+library(plm)
+library(clubSandwich)
+
+##Panel Data 1 descriptive statistics
+library(lmtest)
+Panel.set <- pdata.frame(paneldata, index = c("state", "year"))
+describepanel1 <- describe(Panel.set, skew = FALSE, check = TRUE)
+describepanel1
+#write.table(capture.output(print(describepanel1)),file = "describepanel1.csv")
+
+##ADF Test for stationary, Panel Data 1
+library(tseries)
+adf.test(Panel.set$uninsuredrate, k=2)
+adf.test(Panel.set$age, k=2)
+adf.test(Panel.set$gender, k=2)
+adf.test(Panel.set$race, k=2)
+adf.test(Panel.set$education, k=2)
+adf.test(Panel.set$single, k=2)
+adf.test(Panel.set$femaleheadedhousehold, k=2)
+adf.test(Panel.set$populationdensity, k=2)
+
+##Predict uninsured rate
+n <- names(Panel.set)
+uninsuredrate <- as.formula(paste("uninsuredrate ~", paste(n[!n %in% c("uninsuredrate", "year", "state")], collapse = " + ")))
+uninsuredrate
+
+pooled.uninsured <- plm(uninsuredrate, data=Panel.set, index=c("state", "year"), model="pooling")
+uninsured <- summary(pooled.uninsured)
+uninsured
+#write.table(capture.output(print(uninsured)),file = "uninsuredrate.csv")
+
+##predict value of uninsured rate
+uninsuredrate <- Panel.set$uninsuredrate - pooled.uninsured$residuals
+
+##Input Panel Data 2, Income Growth Data, with predict value of uninsured rate
+paneldata2 <- read_excel("~/IncomeGrowthData.xlsx", col_names = TRUE, col_types = NULL, sheet = 1)
+str(paneldata2)
+paneldata2$state <- factor(paneldata2$state)
+paneldata2$year <- factor(paneldata2$year)
+
+paneldata2$predicteduninsuredrate <- uninsuredrate
+Panel.set2 <- pdata.frame(paneldata2, index = c("state", "year"))
+str(Panel.set2)
+
+##ADF Test for stationary, Panel Data 2
+adf.test(Panel.set2$incomegrowth, k=2)
+adf.test(Panel.set2$population, k=2)
+adf.test(Panel.set2$highwaygvt, k=2)
+adf.test(Panel.set2$caucasian, k=2)
+adf.test(Panel.set2$education, k=2)
+adf.test(Panel.set2$unemploymentrate, k=2)
+adf.test(Panel.set2$governmentexpenditure, k=2)
+adf.test(Panel.set2$populationdensity, k=2)
+adf.test(Panel.set2$femaleheadedhousehold, k=2)
+adf.test(Panel.set2$predicteduninsuredrate, k=2)
+
+Panel.set2$lagged1growth <- lag(Panel.set2$incomegrowth)
+
+##Panel Data 2 descriptive statistics
+describepanel2 <- describe(Panel.set2, skew = FALSE, check = TRUE)
+describepanel2
+#write.table(capture.output(print(describepanel2)),file = "describepanel2.csv")
+
+##Create state dummies for Panel Data 2, MA as base
+library(dummies)
+statedum <- dummy(Panel.set2$state)
+Panel.set2.dum <- cbind(Panel.set2, statedum)
+Panel.set2.dum$stateMA <- NULL
+Panel.set2.dum <- pdata.frame(Panel.set2.dum, index = c("state", "year"))
+
+##Create Panel Data 3 with real uninsured rate
+Panel.set3 <- Panel.set2
+Panel.set3$predicteduninsuredrate <- NULL
+Panel.set3$uninsuredrate <- Panel.set$uninsuredrate
+describepanel3 <- describe(Panel.set3, skew = FALSE, check = TRUE)
+describepanel3
+#write.table(capture.output(print(describepanel3)),file = "describepanel3.csv")
+
+##Create state dummies for Panel Data 3, MA as base
+statedum <- dummy(Panel.set3$state)
+Panel.set3.dum <- cbind(Panel.set3, statedum)
+Panel.set3.dum$stateMA <- NULL
+Panel.set3.dum <- pdata.frame(Panel.set3.dum, index = c("state", "year"))
+
+##Regression for all variables with Pooled OLS and Fixed Effect Model with predicted uninsured rate
+n <- names(Panel.set2.dum)
+incomert <- as.formula(paste("incomegrowth ~", paste(n[!n %in% c("incomegrowth", "year", "state")], collapse = " + ")))
+incomert
+pooling.all <- plm(incomert, data=Panel.set2.dum, index=c("state", "year"), model="pooling")
+fixed.all <- plm(incomert, data=Panel.set2.dum, index=c("state", "year"), model="within")
+summary(pooling.all)
+summary(fixed.all)
+poolingall <- summary(pooling.all)
+fixedall <- summary(fixed.all)
+#write.table(capture.output(print(poolingall)),file = "poolingall.csv")
+#write.table(capture.output(print(fixedall)),file = "fixedall.csv")
+
+##test for fixedall
+bptest(fixed.all, data = Panel.set2.dum, studentize=F)
+pcdtest(fixed.all, test = c("cd"))
+
+##test for poolingall
+bptest(pooling.all, data = Panel.set2.dum, studentize=F)
+pcdtest(pooling.all, test = c("cd"))
+
+##robust
+fixedallHC <- coef_test(fixed.all, vcov = "CR1", cluster = Panel.set2.dum$state, test = "naive-t")
+#write.table(capture.output(print(fixedallHC)),file = "fixedallHC.csv")
+poolingallHC <- coef_test(pooling.all, vcov = "CR1", cluster = Panel.set2.dum$state, test = "naive-t")
+#write.table(capture.output(print(poolingallHC)),file = "poolingallHC.csv")
+
+##Regression for all variables with Pooled OLS and Fixed Effect Model with real uninsured rate
+n <- names(Panel.set3.dum)
+incomert <- as.formula(paste("incomegrowth ~", paste(n[!n %in% c("incomegrowth", "year", "state")], collapse = " + ")))
+incomert
+pooling2.all <- plm(incomert, data=Panel.set3.dum, index=c("state", "year"), model="pooling")
+fixed2.all <- plm(incomert, data=Panel.set3.dum, index=c("state", "year"), model="within")
+summary(pooling2.all)
+summary(fixed2.all)
+pooling2all <- summary(pooling2.all)
+fixed2all <- summary(fixed2.all)
+#write.table(capture.output(print(pooling2all)),file = "pooling2all.csv")
+#write.table(capture.output(print(fixed2all)),file = "fixed2all.csv")
+
+##test for fixedall
+bptest(fixed2.all, data = Panel.set3.dum, studentize=F)
+pcdtest(fixed2.all, test = c("cd"))
+
+##test for poolingall
+bptest(pooling2.all, data = Panel.set3.dum, studentize=F)
+pcdtest(pooling2.all, test = c("cd"))
+
+##robust
+fixed2allHC <- coef_test(fixed2.all, vcov = "CR1", cluster = Panel.set3.dum$state, test = "naive-t")
+#write.table(capture.output(print(fixed2allHC)),file = "fixed2allHC.csv")
+pooling2allHC <- coef_test(pooling2.all, vcov = "CR1", cluster = Panel.set3.dum$state, test = "naive-t")
+#write.table(capture.output(print(pooling2allHC)),file = "pooling2allHC.csv")
